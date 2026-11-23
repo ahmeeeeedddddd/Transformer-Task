@@ -7,8 +7,8 @@ from torch.cuda.amp import autocast
 from transformers import BartTokenizer
 from tqdm import tqdm
 
-from model_a.transformer import Seq2SeqTransformer
-from model_b.inference import load_model_b, summarize as bart_summarize
+from from_scratch.transformer import Seq2SeqTransformer
+from pretrained.inference import load_model_b, summarize as bart_summarize
 from data.dataset import load_cnn_dailymail, SummarizationDataset
 from evaluate.metrics import compute_rouge, count_parameters
 

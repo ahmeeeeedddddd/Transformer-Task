@@ -6,8 +6,8 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from model_a.transformer import Seq2SeqTransformer
-from model_b.inference import load_model_b, summarize as bart_summarize
+from from_scratch.transformer import Seq2SeqTransformer
+from pretrained.inference import load_model_b, summarize as bart_summarize
 from evaluate.metrics import compute_rouge
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

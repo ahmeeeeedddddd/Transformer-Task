@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from transformers import BartTokenizer
 from tqdm import tqdm
 
-from model_a.transformer import Seq2SeqTransformer
+from from_scratch.transformer import Seq2SeqTransformer
 from data.dataset import SummarizationDataset, load_cnn_dailymail
 from evaluate.metrics import compute_rouge
 
