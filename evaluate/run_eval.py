@@ -1,9 +1,9 @@
 import os
 import time
 import json
+import argparse
 import torch
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast
 from transformers import BartTokenizer
 from tqdm import tqdm
 
@@ -75,11 +75,15 @@ def run_model_b_on_test(model_b, tokenizer_b, test_data):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Evaluate Model A vs Model B on test set")
+    parser.add_argument('--test_size', type=int, default=500, help="Number of test samples to evaluate (default: 500)")
+    args = parser.parse_args()
+
     print("Loading tokenizer...")
     tokenizer = BartTokenizer.from_pretrained('facebook/bart-large-cnn')
 
-    print("Loading test data...")
-    _, _, test_data = load_cnn_dailymail(train_size=1, val_size=1, test_size=TEST_SIZE, seed=SEED)
+    print(f"Loading test data ({args.test_size} samples)...")
+    _, _, test_data = load_cnn_dailymail(train_size=1, val_size=1, test_size=args.test_size, seed=SEED)
     test_ds = SummarizationDataset(test_data, tokenizer, max_src_len=512, max_tgt_len=128)
 
     # --- Model A ---
