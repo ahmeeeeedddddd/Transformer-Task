@@ -13,19 +13,20 @@ from transformers import BartTokenizer
 from tqdm import tqdm
 
 from from_scratch.transformer import Seq2SeqTransformer
-from pretrained.inference import load_model_b, summarize as bart_summarize
+from pretrained.inference import load_model_b
 from data.dataset import load_cnn_dailymail, SummarizationDataset
 from evaluate.metrics import compute_rouge, count_parameters
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 CHECKPOINT = os.path.join('checkpoints', 'model_a_best.pt')
-N_EXAMPLES  = 3
-TEST_SIZE   = 2000
-SEED        = 42
+CACHE_A = os.path.join('checkpoints', 'cache_model_a.json')
+CACHE_B = os.path.join('checkpoints', 'cache_model_b.json')
+N_EXAMPLES = 3
+SEED = 42
 
 
 def load_model_a(checkpoint_path):
-    ckpt = torch.load(checkpoint_path, map_location=DEVICE)
+    ckpt = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
     cfg  = ckpt['cfg']
     model = Seq2SeqTransformer(
         vocab_size=cfg['vocab_size'],
@@ -46,15 +47,22 @@ def load_model_a(checkpoint_path):
     return model, cfg
 
 
-def run_model_a_on_test(model, tokenizer, test_ds, cfg):
-    loader = DataLoader(test_ds, batch_size=8, shuffle=False, num_workers=4, pin_memory=True)
+def run_model_a_on_test(model, tokenizer, test_ds, cfg, batch_size=8):
+    if os.path.exists(CACHE_A):
+        with open(CACHE_A, 'r', encoding='utf-8') as f:
+            cached = json.load(f)
+            if len(cached.get('preds', [])) == len(test_ds):
+                print(f"Loaded cached Model A predictions ({len(test_ds)} samples). Skipping Model A eval.")
+                return cached['preds'], cached['refs'], cached['latency']
+
+    loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
     preds, refs = [], []
     latencies = []
 
-    for batch in tqdm(loader, desc='Eval Model A'):
+    for batch in tqdm(loader, desc='Eval Model A (Batched FP16)'):
         src = batch['src'].to(DEVICE)
         t0  = time.time()
-        with torch.no_grad():
+        with torch.no_grad(), torch.amp.autocast('cuda', enabled=torch.cuda.is_available()):
             gen = model.generate(src, max_len=cfg['max_tgt_len'], beam_size=cfg.get('beam_size', 4))
         latencies.append((time.time() - t0) / src.size(0))
 
@@ -64,24 +72,80 @@ def run_model_a_on_test(model, tokenizer, test_ds, cfg):
             preds.append(text)
             refs.append(r)
 
-    return preds, refs, sum(latencies) / len(latencies)
+    avg_lat = sum(latencies) / len(latencies)
+    with open(CACHE_A, 'w', encoding='utf-8') as f:
+        json.dump({'preds': preds, 'refs': refs, 'latency': avg_lat}, f)
+
+    return preds, refs, avg_lat
 
 
-def run_model_b_on_test(model_b, tokenizer_b, test_data):
+def run_model_b_on_test(model_b, tokenizer_b, test_data, batch_size=8):
     preds, refs, latencies = [], [], []
+    start_idx = 0
 
-    for item in tqdm(test_data, desc='Eval Model B'):
-        summary, lat = bart_summarize(item['article'], model_b, tokenizer_b)
-        preds.append(summary)
-        refs.append(item['highlights'])
-        latencies.append(lat)
+    if os.path.exists(CACHE_B):
+        with open(CACHE_B, 'r', encoding='utf-8') as f:
+            saved = json.load(f)
+            if len(saved.get('preds', [])) == len(test_data):
+                print(f"Loaded cached Model B predictions ({len(test_data)} samples).")
+                return saved['preds'], saved['refs'], saved['latency']
+            elif len(saved.get('preds', [])) > 0:
+                preds = saved['preds']
+                refs = saved['refs']
+                latencies = saved['latencies']
+                start_idx = len(preds)
+                print(f"Resuming Model B from sample {start_idx}/{len(test_data)}...")
 
-    return preds, refs, sum(latencies) / len(latencies)
+    articles = [test_data[i]['article'] for i in range(start_idx, len(test_data))]
+    targets  = [test_data[i]['highlights'] for i in range(start_idx, len(test_data))]
+
+    for i in tqdm(range(0, len(articles), batch_size), desc='Eval Model B (Batched FP16)'):
+        batch_articles = articles[i:i + batch_size]
+        batch_targets  = targets[i:i + batch_size]
+
+        inputs = tokenizer_b(
+            batch_articles,
+            return_tensors='pt',
+            max_length=1024,
+            truncation=True,
+            padding=True,
+        ).to(DEVICE)
+
+        t0 = time.time()
+        with torch.no_grad(), torch.amp.autocast('cuda', enabled=torch.cuda.is_available()):
+            ids = model_b.generate(
+                inputs['input_ids'],
+                attention_mask=inputs['attention_mask'],
+                max_length=128,
+                min_length=30,
+                num_beams=4,
+                length_penalty=2.0,
+                early_stopping=True,
+                no_repeat_ngram_size=3,
+            )
+        elapsed = time.time() - t0
+        latencies.extend([elapsed / len(batch_articles)] * len(batch_articles))
+
+        decoded = tokenizer_b.batch_decode(ids, skip_special_tokens=True)
+        preds.extend(decoded)
+        refs.extend(batch_targets)
+
+        # Save progress every 25 batches so progress is never lost
+        if (i // batch_size) % 25 == 0:
+            with open(CACHE_B, 'w', encoding='utf-8') as f:
+                json.dump({'preds': preds, 'refs': refs, 'latencies': latencies, 'latency': sum(latencies)/len(latencies)}, f)
+
+    avg_lat = sum(latencies) / len(latencies)
+    with open(CACHE_B, 'w', encoding='utf-8') as f:
+        json.dump({'preds': preds, 'refs': refs, 'latencies': latencies, 'latency': avg_lat}, f)
+
+    return preds, refs, avg_lat
 
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Model A vs Model B on test set")
-    parser.add_argument('--test_size', type=int, default=-1, help="Number of test samples to evaluate (-1 for full test set, default: -1)")
+    parser.add_argument('--test_size', type=int, default=-1, help="Number of test samples (-1 for full set, default: -1)")
+    parser.add_argument('--batch_size', type=int, default=8, help="Batch size for evaluation (default: 8)")
     args = parser.parse_args()
 
     print("Loading tokenizer...")
@@ -95,14 +159,14 @@ def main():
     # --- Model A ---
     print(f"\nLoading Model A from {CHECKPOINT}...")
     model_a, cfg_a = load_model_a(CHECKPOINT)
-    preds_a, refs_a, lat_a = run_model_a_on_test(model_a, tokenizer, test_ds, cfg_a)
+    preds_a, refs_a, lat_a = run_model_a_on_test(model_a, tokenizer, test_ds, cfg_a, batch_size=args.batch_size)
     rouge_a = compute_rouge(preds_a, refs_a)
     params_a = count_parameters(model_a)
 
     # --- Model B ---
     print("\nLoading Model B (facebook/bart-large-cnn)...")
     model_b, tokenizer_b = load_model_b()
-    preds_b, refs_b, lat_b = run_model_b_on_test(model_b, tokenizer_b, test_data)
+    preds_b, refs_b, lat_b = run_model_b_on_test(model_b, tokenizer_b, test_data, batch_size=args.batch_size)
     rouge_b = compute_rouge(preds_b, refs_b)
     params_b = count_parameters(model_b)
 
