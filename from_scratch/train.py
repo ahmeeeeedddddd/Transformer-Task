@@ -4,10 +4,11 @@ import math
 import random
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from transformers import BartTokenizer
 from tqdm import tqdm
+
+USE_CUDA = torch.cuda.is_available()
 
 from from_scratch.transformer import Seq2SeqTransformer
 from data.dataset import SummarizationDataset, load_cnn_dailymail
@@ -92,7 +93,7 @@ def train_epoch(model, loader, optimizer, scheduler, scaler, criterion, step):
         tgt_in  = tgt[:, :-1]
         tgt_out = tgt[:, 1:]
 
-        with autocast():
+        with torch.amp.autocast('cuda', enabled=USE_CUDA):
             logits = model(src, tgt_in)
             B, T, V = logits.shape
             loss = criterion(logits.reshape(B * T, V), tgt_out.reshape(B * T))
@@ -127,7 +128,7 @@ def evaluate(model, loader, criterion, tokenizer):
         tgt_in  = tgt[:, :-1]
         tgt_out = tgt[:, 1:]
 
-        with autocast():
+        with torch.amp.autocast('cuda', enabled=USE_CUDA):
             logits = model(src, tgt_in)
             B, T, V = logits.shape
             loss = criterion(logits.reshape(B * T, V), tgt_out.reshape(B * T))
@@ -170,7 +171,7 @@ def train():
     model     = build_model()
     optimizer = torch.optim.AdamW(model.parameters(), lr=CFG['lr'], betas=(0.9, 0.98), weight_decay=1e-2)
     criterion = nn.CrossEntropyLoss(ignore_index=CFG['pad_idx'], label_smoothing=CFG['label_smoothing'])
-    scaler    = GradScaler()
+    scaler    = torch.amp.GradScaler('cuda', enabled=USE_CUDA)
 
     best_rouge = 0.0
     global_step = 0

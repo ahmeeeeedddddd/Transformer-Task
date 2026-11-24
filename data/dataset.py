@@ -34,14 +34,13 @@ class SummarizationDataset(Dataset):
             return_tensors='pt',
         )
 
-        with self.tokenizer.as_target_tokenizer():
-            tgt_enc = self.tokenizer(
-                item['highlights'],
-                max_length=self.max_tgt_len,
-                truncation=True,
-                padding='max_length',
-                return_tensors='pt',
-            )
+        tgt_enc = self.tokenizer(
+            item['highlights'],
+            max_length=self.max_tgt_len,
+            truncation=True,
+            padding='max_length',
+            return_tensors='pt',
+        )
 
         return {
             'src':      src_enc['input_ids'].squeeze(0),
