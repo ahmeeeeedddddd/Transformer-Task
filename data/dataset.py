@@ -6,9 +6,9 @@ from datasets import load_dataset
 def load_cnn_dailymail(train_size=50000, val_size=2000, test_size=2000, seed=42):
     ds = load_dataset('abisee/cnn_dailymail', '3.0.0')
 
-    train = ds['train'].shuffle(seed=seed).select(range(min(train_size, len(ds['train']))))
-    val   = ds['validation'].shuffle(seed=seed).select(range(min(val_size, len(ds['validation']))))
-    test  = ds['test'].shuffle(seed=seed).select(range(min(test_size, len(ds['test']))))
+    train = ds['train'].shuffle(seed=seed).select(range(min(train_size, len(ds['train'])))) if train_size and train_size > 0 else ds['train']
+    val   = ds['validation'].shuffle(seed=seed).select(range(min(val_size, len(ds['validation'])))) if val_size and val_size > 0 else ds['validation']
+    test  = ds['test'].shuffle(seed=seed).select(range(min(test_size, len(ds['test'])))) if test_size and test_size > 0 else ds['test']
 
     return train, val, test
 

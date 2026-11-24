@@ -76,13 +76,14 @@ def run_model_b_on_test(model_b, tokenizer_b, test_data):
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Model A vs Model B on test set")
-    parser.add_argument('--test_size', type=int, default=500, help="Number of test samples to evaluate (default: 500)")
+    parser.add_argument('--test_size', type=int, default=-1, help="Number of test samples to evaluate (-1 for full test set, default: -1)")
     args = parser.parse_args()
 
     print("Loading tokenizer...")
     tokenizer = BartTokenizer.from_pretrained('facebook/bart-large-cnn')
 
-    print(f"Loading test data ({args.test_size} samples)...")
+    sample_str = "full test set (11,490)" if args.test_size <= 0 else f"{args.test_size} samples"
+    print(f"Loading test data ({sample_str})...")
     _, _, test_data = load_cnn_dailymail(train_size=1, val_size=1, test_size=args.test_size, seed=SEED)
     test_ds = SummarizationDataset(test_data, tokenizer, max_src_len=512, max_tgt_len=128)
 
