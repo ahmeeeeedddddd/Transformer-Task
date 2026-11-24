@@ -1,10 +1,14 @@
 import os
+import sys
 import time
 import json
 import torch
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+
+# Ensure project root is in sys.path
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from from_scratch.transformer import Seq2SeqTransformer
 from pretrained.inference import load_model_b, summarize as bart_summarize
