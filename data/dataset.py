@@ -4,7 +4,7 @@ from datasets import load_dataset
 
 
 def load_cnn_dailymail(train_size=50000, val_size=2000, test_size=2000, seed=42):
-    ds = load_dataset('cnn_dailymail', '3.0.0')
+    ds = load_dataset('abisee/cnn_dailymail', '3.0.0')
 
     train = ds['train'].shuffle(seed=seed).select(range(min(train_size, len(ds['train']))))
     val   = ds['validation'].shuffle(seed=seed).select(range(min(val_size, len(ds['validation']))))
