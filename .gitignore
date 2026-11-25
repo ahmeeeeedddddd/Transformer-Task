@@ -4,5 +4,6 @@ __pycache__/
 *.pt
 checkpoints/
 eval_results.json
+data/cnn_dailymail_offline/
 .env
 *.log
