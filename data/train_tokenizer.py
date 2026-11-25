@@ -30,18 +30,20 @@ def train_tokenizer():
         special_tokens=["<s>", "<pad>", "</s>", "<unk>"],
     )
 
-    tokenizer.save_model(TOKENIZER_DIR)
+    # Save tokenizer.json
+    tok_json_path = os.path.join(TOKENIZER_DIR, "tokenizer.json")
+    tokenizer.save(tok_json_path)
 
-    # Wrap in HuggingFace fast tokenizer for convenient encode/decode
+    # Wrap in HuggingFace fast tokenizer
     fast_tokenizer = PreTrainedTokenizerFast(
-        tokenizer_file=os.path.join(TOKENIZER_DIR, "vocab.json"),
+        tokenizer_file=tok_json_path,
         bos_token="<s>",
         eos_token="</s>",
         pad_token="<pad>",
         unk_token="<unk>",
     )
     fast_tokenizer.save_pretrained(TOKENIZER_DIR)
-    print(f"Custom 16k tokenizer saved to: {TOKENIZER_DIR}")
+    print(f"Custom 16k tokenizer saved successfully to: {TOKENIZER_DIR}")
 
 if __name__ == '__main__':
     train_tokenizer()
