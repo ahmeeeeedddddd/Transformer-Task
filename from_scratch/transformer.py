@@ -174,7 +174,7 @@ class Seq2SeqTransformer(nn.Module):
         return self.proj(dec_out)
 
     @torch.no_grad()
-    def generate(self, src, max_len=128, beam_size=4):
+    def generate(self, src, max_len=128, beam_size=4, repetition_penalty=1.5):
         self.eval()
         device = src.device
         B = src.size(0)
@@ -183,26 +183,36 @@ class Seq2SeqTransformer(nn.Module):
         enc_out  = self.encoder(src, src_mask)
 
         if beam_size <= 1:
-            return self._greedy(enc_out, src_mask, B, max_len, device)
-        return self._beam(enc_out, src_mask, B, max_len, beam_size, device)
+            return self._greedy(enc_out, src_mask, B, max_len, device, repetition_penalty)
+        return self._beam(enc_out, src_mask, B, max_len, beam_size, device, repetition_penalty)
 
-    def _greedy(self, enc_out, src_mask, B, max_len, device):
+    def _greedy(self, enc_out, src_mask, B, max_len, device, repetition_penalty=1.5):
         tgt = torch.full((B, 1), self.bos_idx, dtype=torch.long, device=device)
         done = torch.zeros(B, dtype=torch.bool, device=device)
         for _ in range(max_len - 1):
             tgt_mask = self._tgt_mask(tgt)
-            logits   = self.proj(self.decoder(tgt, enc_out, src_mask, tgt_mask))
-            next_tok = logits[:, -1, :].argmax(-1, keepdim=True)
+            logits   = self.proj(self.decoder(tgt, enc_out, src_mask, tgt_mask))[:, -1, :]
+
+            if repetition_penalty != 1.0:
+                for b in range(B):
+                    prev_tokens = set(tgt[b].tolist())
+                    for token_id in prev_tokens:
+                        if logits[b, token_id] > 0:
+                            logits[b, token_id] /= repetition_penalty
+                        else:
+                            logits[b, token_id] *= repetition_penalty
+
+            next_tok = logits.argmax(-1, keepdim=True)
             tgt = torch.cat([tgt, next_tok], dim=1)
             done |= (next_tok.squeeze(-1) == self.eos_idx)
             if done.all():
                 break
         return tgt
 
-    def _beam(self, enc_out, src_mask, B, max_len, beam_size, device):
+    def _beam(self, enc_out, src_mask, B, max_len, beam_size, device, repetition_penalty=1.5):
         # Only supports B=1 beam search; falls back to greedy for B>1
         if B > 1:
-            return self._greedy(enc_out, src_mask, B, max_len, device)
+            return self._greedy(enc_out, src_mask, B, max_len, device, repetition_penalty)
 
         sequences = [(torch.full((1, 1), self.bos_idx, dtype=torch.long, device=device), 0.0)]
         completed = []
@@ -215,7 +225,16 @@ class Seq2SeqTransformer(nn.Module):
                     continue
                 tgt_mask = self._tgt_mask(seq)
                 logits   = self.proj(self.decoder(seq, enc_out, src_mask, tgt_mask))
-                log_probs = F.log_softmax(logits[0, -1], dim=-1)
+                logits_last = logits[0, -1].clone()
+
+                if repetition_penalty != 1.0:
+                    for token_id in set(seq[0].tolist()):
+                        if logits_last[token_id] > 0:
+                            logits_last[token_id] /= repetition_penalty
+                        else:
+                            logits_last[token_id] *= repetition_penalty
+
+                log_probs = F.log_softmax(logits_last, dim=-1)
                 top_lp, top_idx = log_probs.topk(beam_size)
                 for lp, idx in zip(top_lp, top_idx):
                     new_seq = torch.cat([seq, idx.view(1, 1)], dim=1)

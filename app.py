@@ -80,7 +80,12 @@ def summarize_a(text, model, tokenizer, cfg):
     src = inputs['input_ids'].to(DEVICE)
     t0  = time.time()
     with torch.no_grad():
-        gen = model.generate(src, max_len=cfg['max_tgt_len'], beam_size=cfg.get('beam_size', 4))
+        gen = model.generate(
+            src, 
+            max_len=cfg['max_tgt_len'], 
+            beam_size=cfg.get('beam_size', 4),
+            repetition_penalty=cfg.get('repetition_penalty', 1.5)
+        )
     latency = time.time() - t0
     ids  = gen.squeeze().tolist()
     text = tokenizer.decode(ids if isinstance(ids, list) else [ids], skip_special_tokens=True)
@@ -109,8 +114,10 @@ def main():
     with st.sidebar:
         st.header("Settings")
         beam_size = st.slider("Beam size (Model A)", 1, 8, 4)
+        rep_penalty = st.slider("Repetition penalty (Model A)", 1.0, 2.5, 1.5, step=0.1)
         if cfg_a:
             cfg_a['beam_size'] = beam_size
+            cfg_a['repetition_penalty'] = rep_penalty
         st.markdown("---")
         st.markdown("**Model A:** Encoder-Decoder Transformer (from scratch)")
         if cfg_a:
