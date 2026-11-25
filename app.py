@@ -19,8 +19,8 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 CHECKPOINT = os.path.join('checkpoints', 'model_a_best.pt')
 EVAL_RESULTS = 'eval_results.json'
 
-EXAMPLES = [
-    (
+EXAMPLES = {
+    "🌿 Example 1 – Amazon Rainforest": (
         "The Amazon rainforest, also known in English as Amazonia, is a moist broadleaf tropical rainforest "
         "in the Amazon biome that covers most of the Amazon basin of South America. This basin encompasses "
         "7,000,000 km2 (2,700,000 sq mi), of which 5,500,000 km2 (2,100,000 sq mi) are covered by the "
@@ -29,7 +29,7 @@ EXAMPLES = [
         "with 60% of the rainforest, followed by Peru with 13%, Colombia with 10%, and with minor amounts "
         "in Bolivia, Ecuador, French Guiana, Guyana, Suriname, and Venezuela."
     ),
-    (
+    "💉 Example 2 – mRNA Flu Vaccine": (
         "Scientists have developed a new vaccine that shows promising results against multiple strains of "
         "influenza. The vaccine, developed over five years of research, uses mRNA technology similar to "
         "COVID-19 vaccines. In clinical trials involving 10,000 participants across 15 countries, the "
@@ -37,7 +37,7 @@ EXAMPLES = [
         "eliminate the need for annual flu shots if approved. The FDA is expected to begin review of the "
         "vaccine next month, with potential approval coming as early as next year."
     ),
-    (
+    "📈 Example 3 – Apple Quarterly Earnings": (
         "Apple Inc. announced record quarterly earnings on Tuesday, reporting revenue of $97.3 billion "
         "for the fourth quarter of fiscal year 2024, up 6% year over year. iPhone sales remained the "
         "company's largest segment at $46.2 billion, while services revenue hit an all-time high of "
@@ -45,7 +45,7 @@ EXAMPLES = [
         "India and Southeast Asia. The company also announced a $110 billion share buyback program, "
         "the largest in Apple history. Shares rose 3% in after-hours trading following the announcement."
     ),
-]
+}
 
 
 @st.cache_resource(show_spinner="Loading Model A (Transformer from Scratch)...")
@@ -79,7 +79,7 @@ def summarize_a(text, model, tokenizer, cfg):
     )
     src = inputs['input_ids'].to(DEVICE)
     t0  = time.time()
-    with torch.no_grad():
+    with torch.no_grad(), torch.amp.autocast('cuda', enabled=torch.cuda.is_available()):
         gen = model.generate(
             src, 
             max_len=cfg['max_tgt_len'], 
@@ -93,135 +93,155 @@ def summarize_a(text, model, tokenizer, cfg):
 
 
 def main():
-    st.set_page_config(page_title="Transformer Summarization", layout="wide", page_icon="📝")
+    st.set_page_config(
+        page_title="Neural Summarization | Scratch vs BART",
+        layout="wide",
+        page_icon="⚡",
+        initial_sidebar_state="expanded"
+    )
 
-    st.title("📝 Text Summarization: Scratch Transformer vs BART-large-cnn")
+    # Custom Clean Styling
+    st.markdown("""
+        <style>
+        .main-header { font-size: 2.2rem; font-weight: 800; margin-bottom: 0.2rem; }
+        .sub-header { font-size: 1.05rem; color: #6c757d; margin-bottom: 1.5rem; }
+        .model-card { border-radius: 12px; padding: 1.2rem; border: 1px solid #e2e8f0; margin-bottom: 1rem; }
+        .latency-badge { font-family: monospace; font-size: 0.85rem; font-weight: 600; padding: 2px 8px; border-radius: 4px; background-color: #f1f5f9; color: #334155; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="main-header">⚡ Neural Text Summarization Benchmark</div>', unsafe_allow_html=True)
     st.markdown(
-        "Compare a **Transformer built from scratch** against **facebook/bart-large-cnn** "
-        "on the CNN/DailyMail summarization task."
+        '<div class="sub-header">Evaluating a <b>From-Scratch Pre-LN Transformer (95M)</b> against <b>facebook/bart-large-cnn (406M)</b> on the CNN/DailyMail benchmark.</div>',
+        unsafe_allow_html=True
     )
 
     model_a, tokenizer_a, cfg_a = get_model_a()
     model_b, tokenizer_b        = get_model_b()
 
-    if model_a is None:
-        st.warning(
-            "⚠️ Model A checkpoint not found. Train Model A first:\n"
-            "```bash\npython -m model_a.train\n```"
-        )
-
-    # --- Sidebar ---
+    # --- Sidebar Controls ---
     with st.sidebar:
-        st.header("Settings")
-        beam_size = st.slider("Beam size (Model A)", 1, 8, 4)
-        rep_penalty = st.slider("Repetition penalty (Model A)", 1.0, 2.5, 1.5, step=0.1)
+        st.header("⚙️ Configuration")
+        beam_size = st.slider("Beam Search Size", 1, 8, 4)
+        rep_penalty = st.slider("Repetition Penalty (Model A)", 1.0, 2.5, 1.5, step=0.1)
         if cfg_a:
             cfg_a['beam_size'] = beam_size
             cfg_a['repetition_penalty'] = rep_penalty
+
         st.markdown("---")
-        st.markdown("**Model A:** Encoder-Decoder Transformer (from scratch)")
-        if cfg_a:
-            st.markdown(f"- d_model: {cfg_a['d_model']}")
-            st.markdown(f"- Layers: {cfg_a['num_encoder_layers']}E / {cfg_a['num_decoder_layers']}D")
-            st.markdown(f"- Heads: {cfg_a['num_heads']}")
-        st.markdown("**Model B:** facebook/bart-large-cnn")
-        st.markdown(f"- Device: `{DEVICE}`")
+        st.markdown("### 🖥️ Hardware & Models")
+        st.caption(f"Device: `{DEVICE}`")
+        if torch.cuda.is_available():
+            st.caption(f"GPU: `{torch.cuda.get_device_name(0)}`")
+        
+        st.markdown("---")
+        st.markdown("**Model A (Scratch):**")
+        st.caption("• Architecture: 6E / 6D Pre-LN\n• Heads: 8 | d_model: 512\n• Vocab: 16k Byte-Level BPE\n• Params: ~95.6M")
+        st.markdown("**Model B (Pretrained):**")
+        st.caption("• Checkpoint: `facebook/bart-large-cnn`\n• 12E / 12D Standard\n• Params: ~406.3M")
 
-    # --- Input ---
-    st.subheader("Input")
-    ex_choice = st.selectbox("Load an example", ["(custom input)", "Example 1 – Amazon", "Example 2 – Vaccine", "Example 3 – Apple"])
-    if ex_choice != "(custom input)":
-        default = EXAMPLES[["Example 1 – Amazon", "Example 2 – Vaccine", "Example 3 – Apple"].index(ex_choice)]
-    else:
-        default = ""
-    text_input = st.text_area("Article text", value=default, height=200, placeholder="Paste article here...")
+    # --- Preset Selector & Input ---
+    col_sel, col_btn = st.columns([4, 1])
+    with col_sel:
+        preset_choice = st.selectbox("Select Preset Benchmark Article:", ["(Write / Paste custom text)"] + list(EXAMPLES.keys()))
+    
+    default_text = EXAMPLES[preset_choice] if preset_choice != "(Write / Paste custom text)" else ""
+    text_input = st.text_area("Source Article Text:", value=default_text, height=180, placeholder="Type or paste text here...")
 
-    run_btn = st.button("🚀 Summarize with both models", type="primary", disabled=(not text_input.strip()))
+    run_col1, run_col2 = st.columns([1, 4])
+    with run_col1:
+        run_btn = st.button("🔥 Run Comparison", type="primary", use_container_width=True, disabled=(not text_input.strip()))
 
     if run_btn and text_input.strip():
         col_a, col_b = st.columns(2)
 
         with col_a:
-            st.subheader("Model A — From Scratch")
+            st.markdown("### 🛠️ Model A — From Scratch")
+            st.caption("Pre-LN Transformer (95.6M parameters)")
             if model_a is not None:
-                with st.spinner("Generating..."):
+                with st.spinner("Generating summary with Model A..."):
                     summary_a, lat_a = summarize_a(text_input, model_a, tokenizer_a, cfg_a)
                 st.success(summary_a)
-                st.caption(f"⏱ Latency: {lat_a:.3f}s")
+                st.markdown(f'<span class="latency-badge">⚡ Inference Latency: {lat_a:.3f}s</span>', unsafe_allow_html=True)
             else:
-                st.error("Model A not loaded (not trained yet).")
+                st.error("⚠️ Model A checkpoint not loaded.")
                 summary_a, lat_a = None, None
 
         with col_b:
-            st.subheader("Model B — BART-large-cnn")
-            with st.spinner("Generating..."):
-                summary_b, lat_b = bart_summarize(text_input, model_b, tokenizer_b)
+            st.markdown("### 🏆 Model B — Pretrained")
+            st.caption("facebook/bart-large-cnn (406.3M parameters)")
+            with st.spinner("Generating summary with BART..."):
+                summary_b, lat_b = bart_summarize(text_input, model_b, tokenizer_b, beam_size=beam_size)
             st.success(summary_b)
-            st.caption(f"⏱ Latency: {lat_b:.3f}s")
+            st.markdown(f'<span class="latency-badge">⚡ Inference Latency: {lat_b:.3f}s</span>', unsafe_allow_html=True)
 
         if summary_a and summary_b:
             rouge = compute_rouge([summary_a], [summary_b])
-            st.info(
-                f"ROUGE-1 (A vs B): `{rouge['rouge1']:.4f}` | "
-                f"ROUGE-L: `{rouge['rougeL']:.4f}`"
-            )
+            st.divider()
+            mcol1, mcol2, mcol3 = st.columns(3)
+            mcol1.metric("Cross-Model ROUGE-1", f"{rouge['rouge1']:.3f}")
+            mcol2.metric("Cross-Model ROUGE-L", f"{rouge['rougeL']:.3f}")
+            speedup = (lat_b / max(1e-4, lat_a)) if lat_a else 1.0
+            mcol3.metric("Model A Speedup", f"{speedup:.1f}x Faster")
 
     st.divider()
 
-    # --- Test Results Dashboard ---
-    st.subheader("📊 Test Set Results")
-
+    # --- Evaluation Dashboard Section ---
+    st.subheader("📊 Full Held-Out Test Set Results")
     if os.path.exists(EVAL_RESULTS):
-        with open(EVAL_RESULTS) as f:
-            results = json.load(f)
+        with open(EVAL_RESULTS, 'r', encoding='utf-8') as f:
+            res = json.load(f)
 
-        metrics = {
-            'Metric':          ['ROUGE-1', 'ROUGE-2', 'ROUGE-L', 'Avg Latency (s)', 'Parameters'],
-            'Model A (Scratch)': [
-                f"{results['model_a']['rouge']['rouge1']:.4f}",
-                f"{results['model_a']['rouge']['rouge2']:.4f}",
-                f"{results['model_a']['rouge']['rougeL']:.4f}",
-                f"{results['model_a']['latency']:.4f}",
-                f"{results['model_a']['params']:,}",
-            ],
-            'Model B (BART-L)': [
-                f"{results['model_b']['rouge']['rouge1']:.4f}",
-                f"{results['model_b']['rouge']['rouge2']:.4f}",
-                f"{results['model_b']['rouge']['rougeL']:.4f}",
-                f"{results['model_b']['latency']:.4f}",
-                f"{results['model_b']['params']:,}",
-            ],
-        }
-        st.dataframe(pd.DataFrame(metrics).set_index('Metric'), use_container_width=True)
+        dcol1, dcol2 = st.columns([1, 1])
+        with dcol1:
+            metrics_table = {
+                'Quality & Efficiency Metric': ['ROUGE-1', 'ROUGE-2', 'ROUGE-L', 'Avg Latency (s)', 'Parameter Count'],
+                'Model A (From Scratch)': [
+                    f"{res['model_a']['rouge']['rouge1']:.4f}",
+                    f"{res['model_a']['rouge']['rouge2']:.4f}",
+                    f"{res['model_a']['rouge']['rougeL']:.4f}",
+                    f"{res['model_a']['latency']:.4f}",
+                    f"{res['model_a']['params']:,}",
+                ],
+                'Model B (BART-Large)': [
+                    f"{res['model_b']['rouge']['rouge1']:.4f}",
+                    f"{res['model_b']['rouge']['rouge2']:.4f}",
+                    f"{res['model_b']['rouge']['rougeL']:.4f}",
+                    f"{res['model_b']['latency']:.4f}",
+                    f"{res['model_b']['params']:,}",
+                ]
+            }
+            st.dataframe(pd.DataFrame(metrics_table).set_index('Quality & Efficiency Metric'), use_container_width=True)
 
-        # Bar chart
-        fig, ax = plt.subplots(figsize=(7, 3.5))
-        labels = ['ROUGE-1', 'ROUGE-2', 'ROUGE-L']
-        a_vals = [results['model_a']['rouge'][k] for k in ['rouge1', 'rouge2', 'rougeL']]
-        b_vals = [results['model_b']['rouge'][k] for k in ['rouge1', 'rouge2', 'rougeL']]
-        x = range(len(labels))
-        ax.bar([i - 0.2 for i in x], a_vals, width=0.4, label='Model A (Scratch)', color='steelblue')
-        ax.bar([i + 0.2 for i in x], b_vals, width=0.4, label='Model B (BART-L)',  color='darkorange')
-        ax.set_xticks(list(x)); ax.set_xticklabels(labels)
-        ax.set_ylabel('Score'); ax.legend(); ax.set_ylim(0, 1)
-        ax.set_title('ROUGE Scores — Test Set')
-        st.pyplot(fig)
+        with dcol2:
+            fig, ax = plt.subplots(figsize=(6, 3.2), dpi=120)
+            labels = ['ROUGE-1', 'ROUGE-2', 'ROUGE-L']
+            a_vals = [res['model_a']['rouge']['rouge1'], res['model_a']['rouge']['rouge2'], res['model_a']['rouge']['rougeL']]
+            b_vals = [res['model_b']['rouge']['rouge1'], res['model_b']['rouge']['rouge2'], res['model_b']['rouge']['rougeL']]
+            x = range(len(labels))
+            ax.bar([i - 0.18 for i in x], a_vals, width=0.36, label='Model A (Scratch)', color='#4361ee')
+            ax.bar([i + 0.18 for i in x], b_vals, width=0.36, label='Model B (BART-L)',  color='#f72585')
+            ax.set_xticks(list(x))
+            ax.set_xticklabels(labels)
+            ax.set_ylim(0, 0.6)
+            ax.set_ylabel('F1 Score')
+            ax.legend(frameon=True)
+            ax.grid(axis='y', linestyle='--', alpha=0.3)
+            plt.tight_layout()
+            st.pyplot(fig)
 
         # Sample predictions
-        st.subheader("Sample Predictions")
-        preds_a = results['model_a']['predictions']
-        preds_b = results['model_b']['predictions']
-        refs    = results['model_a']['references']
+        st.subheader("🔍 Sample Predictions vs Ground Truth")
+        refs = res['model_a'].get('references', [])
+        preds_a = res['model_a'].get('predictions', [])
+        preds_b = res['model_b'].get('predictions', [])
         for i in range(min(3, len(refs))):
-            with st.expander(f"Example {i+1}"):
-                st.markdown(f"**Reference:** {refs[i]}")
-                st.markdown(f"**Model A:** {preds_a[i]}")
-                st.markdown(f"**Model B:** {preds_b[i]}")
+            with st.expander(f"📌 Held-Out Example {i+1}"):
+                st.markdown(f"**Reference Ground Truth:** {refs[i]}")
+                st.markdown(f"**Model A Output:** {preds_a[i]}")
+                st.markdown(f"**Model B Output:** {preds_b[i]}")
     else:
-        st.info("Run `python evaluate/run_eval.py` to generate test results, then refresh.")
-
-    st.divider()
-    st.caption("Dataset: CNN/DailyMail 3.0.0 · Model B: facebook/bart-large-cnn (not fine-tuned further)")
+        st.info("Run `python evaluate/run_eval.py` to populate test set metrics.")
 
 
 if __name__ == '__main__':
