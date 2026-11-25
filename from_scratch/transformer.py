@@ -60,7 +60,7 @@ class FeedForward(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(d_model, d_ff),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(d_ff, d_model),
         )
@@ -73,14 +73,16 @@ class EncoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
         super().__init__()
         self.self_attn = MultiHeadAttention(d_model, num_heads, dropout)
-        self.ff = FeedForward(d_model, d_ff, dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.drop = nn.Dropout(dropout)
+        self.ff        = FeedForward(d_model, d_ff, dropout)
+        self.norm1     = nn.LayerNorm(d_model)
+        self.norm2     = nn.LayerNorm(d_model)
+        self.drop      = nn.Dropout(dropout)
 
     def forward(self, x, src_mask=None):
-        x = self.norm1(x + self.drop(self.self_attn(x, x, x, src_mask)))
-        x = self.norm2(x + self.drop(self.ff(x)))
+        # Pre-LayerNorm architecture
+        norm_x = self.norm1(x)
+        x = x + self.drop(self.self_attn(norm_x, norm_x, norm_x, src_mask))
+        x = x + self.drop(self.ff(self.norm2(x)))
         return x
 
 
@@ -89,16 +91,19 @@ class DecoderLayer(nn.Module):
         super().__init__()
         self.self_attn  = MultiHeadAttention(d_model, num_heads, dropout)
         self.cross_attn = MultiHeadAttention(d_model, num_heads, dropout)
-        self.ff = FeedForward(d_model, d_ff, dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
-        self.drop = nn.Dropout(dropout)
+        self.ff         = FeedForward(d_model, d_ff, dropout)
+        self.norm1      = nn.LayerNorm(d_model)
+        self.norm2      = nn.LayerNorm(d_model)
+        self.norm3      = nn.LayerNorm(d_model)
+        self.drop       = nn.Dropout(dropout)
 
     def forward(self, x, enc_out, src_mask=None, tgt_mask=None):
-        x = self.norm1(x + self.drop(self.self_attn(x, x, x, tgt_mask)))
-        x = self.norm2(x + self.drop(self.cross_attn(x, enc_out, enc_out, src_mask)))
-        x = self.norm3(x + self.drop(self.ff(x)))
+        # Pre-LayerNorm architecture
+        norm_x = self.norm1(x)
+        x = x + self.drop(self.self_attn(norm_x, norm_x, norm_x, tgt_mask))
+        norm_x = self.norm2(x)
+        x = x + self.drop(self.cross_attn(norm_x, enc_out, enc_out, src_mask))
+        x = x + self.drop(self.ff(self.norm3(x)))
         return x
 
 
@@ -195,8 +200,7 @@ class Seq2SeqTransformer(nn.Module):
 
             if repetition_penalty != 1.0:
                 for b in range(B):
-                    prev_tokens = set(tgt[b].tolist())
-                    for token_id in prev_tokens:
+                    for token_id in set(tgt[b].tolist()):
                         if logits[b, token_id] > 0:
                             logits[b, token_id] /= repetition_penalty
                         else:
@@ -210,7 +214,6 @@ class Seq2SeqTransformer(nn.Module):
         return tgt
 
     def _beam(self, enc_out, src_mask, B, max_len, beam_size, device, repetition_penalty=1.5):
-        # Only supports B=1 beam search; falls back to greedy for B>1
         if B > 1:
             return self._greedy(enc_out, src_mask, B, max_len, device, repetition_penalty)
 

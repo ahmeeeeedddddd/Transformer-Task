@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from from_scratch.transformer import Seq2SeqTransformer
 from pretrained.inference import load_model_b, summarize as bart_summarize
 from evaluate.metrics import compute_rouge
+from data.dataset import get_tokenizer_for_model_a
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 CHECKPOINT = os.path.join('checkpoints', 'model_a_best.pt')
@@ -51,10 +52,9 @@ EXAMPLES = [
 def get_model_a():
     if not os.path.exists(CHECKPOINT):
         return None, None, None
-    ckpt = torch.load(CHECKPOINT, map_location=DEVICE)
+    ckpt = torch.load(CHECKPOINT, map_location=DEVICE, weights_only=False)
     cfg  = ckpt['cfg']
-    from transformers import BartTokenizer
-    tokenizer = BartTokenizer.from_pretrained('facebook/bart-large-cnn')
+    tokenizer = get_tokenizer_for_model_a()
     model = Seq2SeqTransformer(
         vocab_size=cfg['vocab_size'], d_model=cfg['d_model'], num_heads=cfg['num_heads'],
         d_ff=cfg['d_ff'], num_encoder_layers=cfg['num_encoder_layers'],

@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from from_scratch.transformer import Seq2SeqTransformer
 from pretrained.inference import load_model_b
-from data.dataset import load_cnn_dailymail, SummarizationDataset
+from data.dataset import load_cnn_dailymail, SummarizationDataset, get_tokenizer_for_model_a
 from evaluate.metrics import compute_rouge, count_parameters
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -58,12 +58,13 @@ def run_model_a_on_test(model, tokenizer, test_ds, cfg, batch_size=8):
     loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
     preds, refs = [], []
     latencies = []
+    rep_penalty = cfg.get('repetition_penalty', 1.5)
 
     for batch in tqdm(loader, desc='Eval Model A (Batched FP16)'):
         src = batch['src'].to(DEVICE)
         t0  = time.time()
         with torch.no_grad(), torch.amp.autocast('cuda', enabled=torch.cuda.is_available()):
-            gen = model.generate(src, max_len=cfg['max_tgt_len'], beam_size=cfg.get('beam_size', 4))
+            gen = model.generate(src, max_len=cfg['max_tgt_len'], beam_size=1, repetition_penalty=rep_penalty)
         latencies.append((time.time() - t0) / src.size(0))
 
         for g, r in zip(gen, batch['tgt_text']):
@@ -130,7 +131,6 @@ def run_model_b_on_test(model_b, tokenizer_b, test_data, batch_size=8):
         preds.extend(decoded)
         refs.extend(batch_targets)
 
-        # Save progress every 25 batches so progress is never lost
         if (i // batch_size) % 25 == 0:
             with open(CACHE_B, 'w', encoding='utf-8') as f:
                 json.dump({'preds': preds, 'refs': refs, 'latencies': latencies, 'latency': sum(latencies)/len(latencies)}, f)
@@ -146,26 +146,31 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate Model A vs Model B on test set")
     parser.add_argument('--test_size', type=int, default=-1, help="Number of test samples (-1 for full set, default: -1)")
     parser.add_argument('--batch_size', type=int, default=8, help="Batch size for evaluation (default: 8)")
+    parser.add_argument('--force_reeval_a', action='store_true', help="Force re-evaluation of Model A even if cache exists")
     args = parser.parse_args()
 
-    print("Loading tokenizer...")
-    tokenizer = BartTokenizer.from_pretrained('facebook/bart-large-cnn')
+    if args.force_reeval_a and os.path.exists(CACHE_A):
+        os.remove(CACHE_A)
+
+    print("Loading tokenizers...")
+    tokenizer_a = get_tokenizer_for_model_a()
+    tokenizer_b = BartTokenizer.from_pretrained('facebook/bart-large-cnn')
 
     sample_str = "full test set (11,490)" if args.test_size <= 0 else f"{args.test_size} samples"
     print(f"Loading test data ({sample_str})...")
     _, _, test_data = load_cnn_dailymail(train_size=1, val_size=1, test_size=args.test_size, seed=SEED)
-    test_ds = SummarizationDataset(test_data, tokenizer, max_src_len=512, max_tgt_len=128)
+    test_ds_a = SummarizationDataset(test_data, tokenizer_a, max_src_len=512, max_tgt_len=128)
 
     # --- Model A ---
     print(f"\nLoading Model A from {CHECKPOINT}...")
     model_a, cfg_a = load_model_a(CHECKPOINT)
-    preds_a, refs_a, lat_a = run_model_a_on_test(model_a, tokenizer, test_ds, cfg_a, batch_size=args.batch_size)
+    preds_a, refs_a, lat_a = run_model_a_on_test(model_a, tokenizer_a, test_ds_a, cfg_a, batch_size=args.batch_size)
     rouge_a = compute_rouge(preds_a, refs_a)
     params_a = count_parameters(model_a)
 
     # --- Model B ---
     print("\nLoading Model B (facebook/bart-large-cnn)...")
-    model_b, tokenizer_b = load_model_b()
+    model_b, _ = load_model_b()
     preds_b, refs_b, lat_b = run_model_b_on_test(model_b, tokenizer_b, test_data, batch_size=args.batch_size)
     rouge_b = compute_rouge(preds_b, refs_b)
     params_b = count_parameters(model_b)
