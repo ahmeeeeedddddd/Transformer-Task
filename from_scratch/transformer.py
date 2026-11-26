@@ -179,7 +179,7 @@ class Seq2SeqTransformer(nn.Module):
         return self.proj(dec_out)
 
     @torch.no_grad()
-    def generate(self, src, max_len=128, beam_size=4, repetition_penalty=1.5):
+    def generate(self, src, max_len=128, beam_size=4, repetition_penalty=1.5, no_repeat_ngram_size=3):
         self.eval()
         device = src.device
         B = src.size(0)
@@ -188,23 +188,39 @@ class Seq2SeqTransformer(nn.Module):
         enc_out  = self.encoder(src, src_mask)
 
         if beam_size <= 1:
-            return self._greedy(enc_out, src_mask, B, max_len, device, repetition_penalty)
-        return self._beam(enc_out, src_mask, B, max_len, beam_size, device, repetition_penalty)
+            return self._greedy(enc_out, src_mask, B, max_len, device, repetition_penalty, no_repeat_ngram_size)
+        return self._beam(enc_out, src_mask, B, max_len, beam_size, device, repetition_penalty, no_repeat_ngram_size)
 
-    def _greedy(self, enc_out, src_mask, B, max_len, device, repetition_penalty=1.5):
+    def _block_ngrams(self, seq, logits, no_repeat_ngram_size=3):
+        if no_repeat_ngram_size <= 0 or seq.size(0) < no_repeat_ngram_size:
+            return logits
+        tokens = seq.tolist()
+        ngram_len = no_repeat_ngram_size - 1
+        prefix = tuple(tokens[-ngram_len:])
+        banned = []
+        for i in range(len(tokens) - ngram_len):
+            if tuple(tokens[i:i + ngram_len]) == prefix and (i + ngram_len) < len(tokens):
+                banned.append(tokens[i + ngram_len])
+        for tok in banned:
+            logits[tok] = float('-inf')
+        return logits
+
+    def _greedy(self, enc_out, src_mask, B, max_len, device, repetition_penalty=1.5, no_repeat_ngram_size=3):
         tgt = torch.full((B, 1), self.bos_idx, dtype=torch.long, device=device)
         done = torch.zeros(B, dtype=torch.bool, device=device)
         for _ in range(max_len - 1):
             tgt_mask = self._tgt_mask(tgt)
             logits   = self.proj(self.decoder(tgt, enc_out, src_mask, tgt_mask))[:, -1, :]
 
-            if repetition_penalty != 1.0:
-                for b in range(B):
+            for b in range(B):
+                if repetition_penalty != 1.0:
                     for token_id in set(tgt[b].tolist()):
                         if logits[b, token_id] > 0:
                             logits[b, token_id] /= repetition_penalty
                         else:
                             logits[b, token_id] *= repetition_penalty
+                if no_repeat_ngram_size > 0:
+                    logits[b] = self._block_ngrams(tgt[b], logits[b], no_repeat_ngram_size)
 
             next_tok = logits.argmax(-1, keepdim=True)
             tgt = torch.cat([tgt, next_tok], dim=1)
@@ -213,9 +229,9 @@ class Seq2SeqTransformer(nn.Module):
                 break
         return tgt
 
-    def _beam(self, enc_out, src_mask, B, max_len, beam_size, device, repetition_penalty=1.5):
+    def _beam(self, enc_out, src_mask, B, max_len, beam_size, device, repetition_penalty=1.5, no_repeat_ngram_size=3):
         if B > 1:
-            return self._greedy(enc_out, src_mask, B, max_len, device, repetition_penalty)
+            return self._greedy(enc_out, src_mask, B, max_len, device, repetition_penalty, no_repeat_ngram_size)
 
         sequences = [(torch.full((1, 1), self.bos_idx, dtype=torch.long, device=device), 0.0)]
         completed = []
@@ -236,6 +252,9 @@ class Seq2SeqTransformer(nn.Module):
                             logits_last[token_id] /= repetition_penalty
                         else:
                             logits_last[token_id] *= repetition_penalty
+
+                if no_repeat_ngram_size > 0:
+                    logits_last = self._block_ngrams(seq[0], logits_last, no_repeat_ngram_size)
 
                 log_probs = F.log_softmax(logits_last, dim=-1)
                 top_lp, top_idx = log_probs.topk(beam_size)
